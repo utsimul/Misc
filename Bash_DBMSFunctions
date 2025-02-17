@@ -1,0 +1,208 @@
+#!/bin/bash
+
+# Function to add or modify schema
+add_schema() {
+    dbName="$1"
+    if [[ -s "$dbName" ]]; then
+        echo "Database already has a schema. Do you want to modify it? (y/n)"
+        read -p "Choice: " ch
+        if [[ "$ch" != "y" ]]; then
+            return
+        fi
+    fi
+    
+    read -p "Enter columns separated by '|': " colRow
+    IFS='|' read -r -a col_array <<< "$colRow"
+    col_count=${#col_array[@]}
+
+    echo "$col_count" > "$dbName"
+    echo "$colRow" >> "$dbName"
+
+    while true; do
+        read -p "Enter data types for the columns (INT, FLOAT, STR, VARCHAR) separated by '|': " dataTypes
+        IFS='|' read -r -a dtype_array <<< "$dataTypes"
+
+        if [[ ${#dtype_array[@]} -ne col_count ]]; then
+            echo "The number of data types does not match the number of columns. Try again."
+            continue
+        fi
+
+        valid_types=("INT" "FLOAT" "STR" "VARCHAR")
+        flag=true
+        for dtype in "${dtype_array[@]}"; do
+            if [[ ! " ${valid_types[*]} " =~ " $dtype " ]]; then
+                echo "$dtype is not a valid data type. Allowed: INT, FLOAT, STR, VARCHAR."
+                flag=false
+            fi
+        done
+
+        if $flag; then
+            echo "$dataTypes" >> "$dbName"
+            echo "Schema successfully created."
+            break
+        else
+            echo "Invalid data types entered. Try again."
+        fi
+    done
+}
+
+# Function to insert a row
+insert_row() {
+    dbName="$1"
+
+    if [[ ! -s "$dbName" ]]; then
+        echo "Database does not have a schema. Create schema first."
+        return
+    fi
+
+    col_count=$(head -1 "$dbName")
+    dtype_row=$(sed -n '3p' "$dbName")
+    IFS='|' read -r -a dtype_array <<< "$dtype_row"
+
+    while true; do
+        read -p "Enter row values separated by '|': " row
+        IFS='|' read -r -a row_values <<< "$row"
+
+        if [[ ${#row_values[@]} -ne col_count ]]; then
+            echo "Number of values does not match schema. Try again."
+            continue
+        fi
+
+        flag=true
+        for i in "${!row_values[@]}"; do
+            val="${row_values[$i]}"
+            dtype="${dtype_array[$i]}"
+
+            case "$dtype" in
+                INT)
+                    [[ "$val" =~ ^[0-9]+$ ]] || { echo "$val is not an INT."; flag=false; }
+                    ;;
+                FLOAT)
+                    [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "$val is not a FLOAT."; flag=false; }
+                    ;;
+                STR)
+                    [[ "$val" =~ ^[a-zA-Z]+$ ]] || { echo "$val is not a STRING."; flag=false; }
+                    ;;
+                VARCHAR)
+                    ;; # No restriction for VARCHAR
+                *)
+                    echo "Unknown data type $dtype"
+                    flag=false
+                    ;;
+            esac
+        done
+
+        if $flag; then
+            echo "$row" >> "$dbName"
+            echo "Row inserted successfully."
+            break
+        else
+            echo "Invalid values. Try again."
+        fi
+    done
+}
+
+# Function to search for a row by primary key (first column)
+search() {
+    dbName="$1"
+    key="$2"
+    
+    result=$(grep "^$key|" "$dbName")
+    if [[ -z "$result" ]]; then
+        echo "Entry not found."
+        return 1
+    else
+        echo "Entry found: $result"
+        return 0
+    fi
+}
+
+# Function to modify a row by primary key
+modify_row_by_key() {
+    dbName="$1"
+    key="$2"
+
+    if search "$dbName" "$key"; then
+        echo "Deleting old row..."
+        grep -v "^$key|" "$dbName" > temp_db
+        mv temp_db "$dbName"
+
+        echo "Insert new row with modified values."
+        insert_row "$dbName"
+    else
+        echo "Row with key '$key' not found."
+    fi
+}
+
+# Function to delete a row by primary key
+delete_row() {
+    dbName="$1"
+    key="$2"
+
+    if search "$dbName" "$key"; then
+        grep -v "^$key|" "$dbName" > temp_db
+        mv temp_db "$dbName"
+        echo "Row deleted successfully."
+    else
+        echo "Row not found. Cannot delete."
+    fi
+}
+
+# Function to sort the database by primary key
+sort_database() {
+    dbName="$1"
+    tail -n +4 "$dbName" | sort > temp_db
+    head -3 "$dbName" > "$dbName"
+    cat temp_db >> "$dbName"
+    rm temp_db
+    echo "Database sorted by primary key."
+}
+
+# MAIN MENU
+echo "========== Simple DBMS =========="
+echo "1. Create a new database"
+echo "2. Open an existing database"
+read -p "Enter choice: " choice1
+
+if [[ "$choice1" == "1" ]]; then
+    read -p "Enter name of new database: " dbName
+    touch "$dbName"
+    echo "Database '$dbName' created."
+else
+    read -p "Enter database name: " dbName
+    if [[ ! -f "$dbName" ]]; then
+        echo "Database does not exist. Exiting."
+        exit 1
+    fi
+fi
+
+echo "========== DBMS Functions =========="
+echo "1. Insert row"
+echo "2. Delete row"
+echo "3. Modify row by key"
+echo "4. Search for a row"
+echo "5. Sort database"
+echo "6. Add schema"
+echo "7. Exit"
+
+read -p "Enter your choice: " choice
+
+case "$choice" in
+    1) insert_row "$dbName" ;;
+    2) 
+        read -p "Enter key to delete: " key
+        delete_row "$dbName" "$key"
+        ;;
+    3) 
+        read -p "Enter key to modify: " key
+        modify_row_by_key "$dbName" "$key"
+        ;;
+    4) 
+        read -p "Enter key to search: " key
+        search "$dbName" "$key"
+        ;;
+    5) sort_database "$dbName" ;;
+    6) add_schema "$dbName" ;;
+    7) exit 0 ;;
+    *) echo "Invalid choice. Exiting." ;;
+esac
